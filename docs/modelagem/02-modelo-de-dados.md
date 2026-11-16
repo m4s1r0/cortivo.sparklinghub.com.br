@@ -48,23 +48,28 @@ erDiagram
 
 ## Tabelas
 
-### Infraestrutura (migração 0001 — C00/C01)
+### Infraestrutura (migração 0001 — C00, publicada no Core: spec 009)
+
+Artefato publicado em `core/produtos/cortivo/artifact/` (`0001_base`, manifesto v1,
+`appendOnlyTables: ["auditoria"]`). **Onde o contrato do Core prevalece sobre esta modelagem:** o
+marcador usa o formato do contrato do artefato, e `unidade` e `perfil_colaborador` já nascem na
+0001. A migração `0002` (C01) acrescenta `profissional` e a integridade do perfil barbeiro.
 
 | Tabela | Colunas essenciais | Restrições |
 | --- | --- | --- |
-| `_spark_instance` | `instance_id`, `product_code`, `created_at` | linha única; conferida no boot (`INT-010`) |
+| `_spark_instance` | `instance_uuid`, `product_code`, `owner_task_uuid`, `synthetic`, `created_at` (formato do contrato do Core, igual ao do Tuteli) | linha única; conferida no boot (`INT-010`) |
 | `idempotencia` | `chave`, `ator_membership_id`, `operacao`, `resumo_sha256`, `status_http`, `resposta_json`, `criado_em`, `expira_em` | PK (`chave`,`ator`,`operacao`); limpeza > 24 h |
 | `auditoria` | `id`, `ocorrido_em`, `ator_membership_id`, `ator_nome`, `acao`, `resultado`, `entidade`, `entidade_id`, `motivo`, `antes_json`, `depois_json`, `correlation_id CHAR(36)` | **só-inserção** (`SEC-BASE-12`); sem dados pessoais completos |
 | `outbox_evento` | `event_id`, `kind`, `count`, `occurred_at`, `batch_id`, `estado`, `tentativas`, `proxima_tentativa_em` | `event_id` único |
+| `unidade` (0001) | `id` (sempre 1), `nome_atendimento`, `telefone`, `whatsapp`, `email`, `cep`, `logradouro`, `numero`, `complemento`, `bairro`, `cidade`, `uf`, `fuso` (do Core), `tolerancia_falta_min` (padrão **15**, D-COR-04), `passo_agenda_min` (padrão **15**; aceita 5/10/15/20/30), `version` | **linha única** (`CHECK id = 1`); nasce vazia, gravada pelo Cortivo na C02 |
+| `perfil_colaborador` (0001) | `membership_id` PK, `perfis` SET(`recepcao`,`barbeiro`), `profissional_id` NULL (sem FK), `definido_por`, `version` | perfis acumuláveis e não vazios (D-COR-03, `CHECK perfis <> ''`); a regra "barbeiro ⇒ `profissional_id` NOT NULL e único entre vínculos vigentes" entra na 0002, junto com `profissional`; histórico na `auditoria` |
 
-### Unidade e equipe (C02)
+### Unidade e equipe (C02; `profissional` chega na 0002 da C01)
 
 | Tabela | Colunas essenciais | Restrições |
 | --- | --- | --- |
-| `unidade` | `nome_atendimento`, `telefone`, `whatsapp`, `email`, `cep`, `logradouro`, `numero`, `complemento`, `bairro`, `cidade`, `uf`, `fuso` (do Core), `tolerancia_falta_min` (padrão **15**, D-COR-04), `passo_agenda_min` (padrão **15**; aceita 5/10/15/20/30), `version` | linha única |
 | `unidade_horario` | `dia_semana`, `inicio`, `fim` | intervalos sem sobreposição por dia |
 | `profissional` | `id`, `nome`, `apelido`, `telefone`, `estado` (`ativo`/`inativo`), `membership_id` NULL, `cor_agenda` (token), `version` | `membership_id` único entre ativos |
-| `perfil_colaborador` | `membership_id` PK, `perfis` SET(`recepcao`,`barbeiro`) não vazio, `profissional_id` NULL, `definido_por`, `version` | perfis acumuláveis (D-COR-03); contém `barbeiro` ⇒ `profissional_id` NOT NULL e único entre vínculos vigentes; histórico na `auditoria` |
 | `profissional_servico` | `profissional_id`, `servico_id` | PK composta |
 | `expediente` | `profissional_id`, `dia_semana`, `inicio`, `fim` | pausas = lacunas entre intervalos |
 | `bloqueio` | `id`, `profissional_id` NULL (= unidade), `inicio_em`, `fim_em`, `motivo`, `estado` | `[início, fim)`; conflito com reserva vigente bloqueia gravação |

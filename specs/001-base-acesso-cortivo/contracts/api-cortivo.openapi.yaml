@@ -1,0 +1,573 @@
+openapi: 3.1.0
+info:
+  title: Cortivo API — fatia 001 (C00 + C01)
+  version: 0.1.0
+  description: >
+    API própria do Cortivo consumida pela SPA na mesma origem. Convenções de
+    core/.../contracts/conventions.md (camelCase, envelope de erro, X-Correlation-Id UUID,
+    Idempotency-Key, version otimista, paginação com teto). Toda rota exige sessão válida pela
+    projeção de acesso (INT-050), exceto as marcadas com `security: []`. Escritas exigem
+    `Content-Type: application/json` (415) e origem própria (403 AUTH_ORIGIN_REFUSED). Corpo
+    máximo 1 MiB (413). Recurso de outra instância responde 404 idêntico a inexistente.
+servers:
+  - url: /api
+security:
+  - sessaoCortivo: []
+
+paths:
+  /saude:
+    get:
+      operationId: saude
+      security: []
+      summary: Prontidão do processo (sem detalhes internos)
+      responses:
+        "200":
+          description: Instância pronta
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [status]
+                properties:
+                  status: { const: pronta }
+        "503": { $ref: "#/components/responses/Indisponivel" }
+
+  /auth/login:
+    post:
+      operationId: login
+      security: []
+      summary: Entrar (INT-030); delega ao Core com IP real
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [email, senha]
+              properties:
+                email: { type: string, format: email, maxLength: 254 }
+                senha: { type: string, minLength: 1, maxLength: 128 }
+      responses:
+        "200":
+          description: Sessão criada; cookie __Host-cortivo_session definido
+          headers:
+            Set-Cookie: { schema: { type: string } }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Sessao" }
+        "401":
+          description: AUTH_INVALID_CREDENTIALS (mensagem única)
+          content: { application/json: { schema: { $ref: "#/components/schemas/Erro" } } }
+        "422": { $ref: "#/components/responses/Validacao" }
+        "429":
+          description: AUTH_THROTTLED (20 tentativas / 15 min / IP local, ou limite do Core)
+          headers:
+            Retry-After: { schema: { type: integer } }
+          content: { application/json: { schema: { $ref: "#/components/schemas/Erro" } } }
+        "503": { $ref: "#/components/responses/Indisponivel" }
+
+  /auth/recuperar:
+    get:
+      operationId: recuperarSenha
+      security: []
+      summary: Redireciona à página pública de recuperação do Core (FR-030, INT-070.3)
+      responses:
+        "302":
+          description: Location = SPARKCORE_PUBLIC_URL + /recuperar (sem parâmetros do usuário)
+          headers:
+            Location: { schema: { type: string, format: uri } }
+
+  /auth/logout:
+    post:
+      operationId: logout
+      summary: Sair (INT-060); grava access_session_logout antes de apagar o cookie
+      responses:
+        "204":
+          description: Sessão encerrada; cookie apagado (também quando a gravação falha)
+        "401": { $ref: "#/components/responses/NaoAutenticado" }
+
+  /sessao:
+    get:
+      operationId: obterSessao
+      summary: Sessão atual (FR-031); permitido também ao colaborador pendente
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Sessao" }
+          description: OK
+        "401": { $ref: "#/components/responses/NaoAutenticado" }
+        "503": { $ref: "#/components/responses/Indisponivel" }
+
+  /equipe/membros:
+    get:
+      operationId: listarMembros
+      summary: Membros e convites (Core) combinados com perfis locais — administrador
+      parameters:
+        - $ref: "#/components/parameters/Offset"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [itens, pagina]
+                properties:
+                  itens: { type: array, items: { $ref: "#/components/schemas/Membro" } }
+                  pagina: { $ref: "#/components/schemas/Pagina" }
+        "401": { $ref: "#/components/responses/NaoAutenticado" }
+        "403": { $ref: "#/components/responses/SemPermissao" }
+        "503": { $ref: "#/components/responses/Indisponivel" }
+
+  /equipe/convites:
+    post:
+      operationId: convidar
+      summary: Convidar (proxy POST /internal/v1/.../invitations) — administrador
+      parameters: [{ $ref: "#/components/parameters/IdempotencyKey" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [email, papel]
+              properties:
+                email: { type: string, format: email, maxLength: 254 }
+                papel: { $ref: "#/components/schemas/Papel" }
+      responses:
+        "201":
+          description: Link de uso único, exibido uma vez; nunca registrado em log ou auditoria
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [link, expiraEm]
+                properties:
+                  link: { type: string, format: uri }
+                  expiraEm: { type: string, format: date-time }
+        "403": { $ref: "#/components/responses/SemPermissao" }
+        "409": { $ref: "#/components/responses/Conflito" }
+        "422": { $ref: "#/components/responses/Validacao" }
+        "503": { $ref: "#/components/responses/Indisponivel" }
+
+  /equipe/convites/{invitationId}/revogar:
+    post:
+      operationId: revogarConvite
+      parameters:
+        - { name: invitationId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ComMotivo" }
+      responses:
+        "204": { description: Revogado }
+        "403": { $ref: "#/components/responses/SemPermissao" }
+        "404": { $ref: "#/components/responses/NaoEncontrado" }
+        "409": { $ref: "#/components/responses/Conflito" }
+        "503": { $ref: "#/components/responses/Indisponivel" }
+
+  /equipe/membros/{membershipId}/papel:
+    put:
+      operationId: mudarPapel
+      summary: Mudar papel (proxy .../members/{id}/role); regra do último administrador é do Core
+      parameters:
+        - $ref: "#/components/parameters/MembershipId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [papel, motivo, version]
+              properties:
+                papel: { $ref: "#/components/schemas/Papel" }
+                motivo: { $ref: "#/components/schemas/Motivo" }
+                version: { type: integer, minimum: 1 }
+      responses:
+        "200": { $ref: "#/components/responses/ResultadoSincronizacao" }
+        "403": { $ref: "#/components/responses/SemPermissao" }
+        "404": { $ref: "#/components/responses/NaoEncontrado" }
+        "409":
+          description: CONFLICT_VERSION, CONFLICT_LAST_ADMIN ou CONFLICT_IDEMPOTENCY_KEY_REUSED
+          content: { application/json: { schema: { $ref: "#/components/schemas/Erro" } } }
+        "503": { $ref: "#/components/responses/Indisponivel" }
+
+  /equipe/membros/{membershipId}/revogar:
+    post:
+      operationId: revogarVinculo
+      parameters:
+        - $ref: "#/components/parameters/MembershipId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [motivo, version]
+              properties:
+                motivo: { $ref: "#/components/schemas/Motivo" }
+                version: { type: integer, minimum: 1 }
+      responses:
+        "200": { $ref: "#/components/responses/ResultadoSincronizacao" }
+        "403": { $ref: "#/components/responses/SemPermissao" }
+        "404": { $ref: "#/components/responses/NaoEncontrado" }
+        "409": { $ref: "#/components/responses/Conflito" }
+        "503": { $ref: "#/components/responses/Indisponivel" }
+
+  /equipe/membros/{membershipId}/perfil:
+    put:
+      operationId: definirPerfil
+      summary: Definir perfis locais (D-COR-03) — administrador; auditado
+      parameters:
+        - $ref: "#/components/parameters/MembershipId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [perfis]
+              properties:
+                perfis:
+                  type: array
+                  minItems: 1
+                  uniqueItems: true
+                  items: { $ref: "#/components/schemas/PerfilLocal" }
+                profissionalId:
+                  type: [string, "null"]
+                  format: uuid
+                  description: obrigatório quando perfis contém barbeiro; proibido caso contrário
+                version:
+                  type: [integer, "null"]
+                  description: nulo na criação; versão atual na edição
+      responses:
+        "200":
+          description: Perfil gravado
+          content: { application/json: { schema: { $ref: "#/components/schemas/PerfilColaborador" } } }
+        "403": { $ref: "#/components/responses/SemPermissao" }
+        "404": { $ref: "#/components/responses/NaoEncontrado" }
+        "409":
+          description: CONFLICT_VERSION ou PROFISSIONAL_JA_ASSOCIADO
+          content: { application/json: { schema: { $ref: "#/components/schemas/Erro" } } }
+        "422":
+          description: VALIDATION_* , PERFIL_BARBEIRO_EXIGE_PROFISSIONAL, PROFISSIONAL_INATIVO, PERFIL_ALVO_ADMINISTRADOR
+          content: { application/json: { schema: { $ref: "#/components/schemas/Erro" } } }
+    delete:
+      operationId: removerPerfil
+      summary: Remover todos os perfis (colaborador volta a pendente); auditado
+      parameters:
+        - $ref: "#/components/parameters/MembershipId"
+        - { name: version, in: query, required: true, schema: { type: integer, minimum: 1 } }
+      responses:
+        "204": { description: Removido }
+        "403": { $ref: "#/components/responses/SemPermissao" }
+        "404": { $ref: "#/components/responses/NaoEncontrado" }
+        "409": { $ref: "#/components/responses/Conflito" }
+
+  /profissionais:
+    get:
+      operationId: listarProfissionais
+      summary: Lista paginada (nesta fatia, administrador; C02 abre leitura aos demais)
+      parameters:
+        - $ref: "#/components/parameters/Offset"
+        - $ref: "#/components/parameters/Limit"
+        - { name: estado, in: query, schema: { type: string, enum: [ativo, inativo] } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [itens, pagina]
+                properties:
+                  itens: { type: array, items: { $ref: "#/components/schemas/Profissional" } }
+                  pagina: { $ref: "#/components/schemas/Pagina" }
+        "403": { $ref: "#/components/responses/SemPermissao" }
+    post:
+      operationId: criarProfissional
+      parameters: [{ $ref: "#/components/parameters/IdempotencyKey" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ProfissionalEntrada" }
+      responses:
+        "201":
+          description: Criado (repetição com a mesma chave devolve a mesma resposta)
+          content: { application/json: { schema: { $ref: "#/components/schemas/Profissional" } } }
+        "403": { $ref: "#/components/responses/SemPermissao" }
+        "409": { $ref: "#/components/responses/Conflito" }
+        "422": { $ref: "#/components/responses/Validacao" }
+
+  /profissionais/{id}:
+    put:
+      operationId: editarProfissional
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "#/components/schemas/ProfissionalEntrada"
+                - type: object
+                  required: [version]
+                  properties: { version: { type: integer, minimum: 1 } }
+      responses:
+        "200":
+          description: Editado
+          content: { application/json: { schema: { $ref: "#/components/schemas/Profissional" } } }
+        "404": { $ref: "#/components/responses/NaoEncontrado" }
+        "409": { $ref: "#/components/responses/Conflito" }
+        "422": { $ref: "#/components/responses/Validacao" }
+
+  /profissionais/{id}/inativar:
+    post:
+      operationId: inativarProfissional
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [version]
+              properties: { version: { type: integer, minimum: 1 } }
+      responses:
+        "200":
+          description: Inativado
+          content: { application/json: { schema: { $ref: "#/components/schemas/Profissional" } } }
+        "404": { $ref: "#/components/responses/NaoEncontrado" }
+        "409":
+          description: CONFLICT_VERSION ou PROFISSIONAL_EM_USO (associado a barbeiro de vínculo ativo)
+          content: { application/json: { schema: { $ref: "#/components/schemas/Erro" } } }
+
+  /profissionais/{id}/reativar:
+    post:
+      operationId: reativarProfissional
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [version]
+              properties: { version: { type: integer, minimum: 1 } }
+      responses:
+        "200":
+          description: Reativado
+          content: { application/json: { schema: { $ref: "#/components/schemas/Profissional" } } }
+        "404": { $ref: "#/components/responses/NaoEncontrado" }
+        "409": { $ref: "#/components/responses/Conflito" }
+
+components:
+  securitySchemes:
+    sessaoCortivo:
+      type: apiKey
+      in: cookie
+      name: __Host-cortivo_session
+      description: cortivo_session apenas em desenvolvimento HTTP; conteúdo cifrado AES-256-GCM
+
+  parameters:
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema: { type: string, format: uuid }
+    MembershipId:
+      name: membershipId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    Id:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    Offset:
+      name: offset
+      in: query
+      schema: { type: integer, minimum: 0, maximum: 10000, default: 0 }
+    Limit:
+      name: limit
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+
+  responses:
+    NaoAutenticado:
+      description: AUTH_SESSION_INVALID — cookie apagado
+      content: { application/json: { schema: { $ref: "#/components/schemas/Erro" } } }
+    SemPermissao:
+      description: AUTH_FORBIDDEN (papel/perfil insuficiente) ou PERFIL_PENDENTE
+      content: { application/json: { schema: { $ref: "#/components/schemas/Erro" } } }
+    NaoEncontrado:
+      description: NOT_FOUND — inexistente ou de outra instância (resposta idêntica)
+      content: { application/json: { schema: { $ref: "#/components/schemas/Erro" } } }
+    Conflito:
+      description: CONFLICT_*
+      content: { application/json: { schema: { $ref: "#/components/schemas/Erro" } } }
+    Validacao:
+      description: VALIDATION_* com field (JSON Pointer) e details
+      content: { application/json: { schema: { $ref: "#/components/schemas/Erro" } } }
+    Indisponivel:
+      description: SYSTEM_INSTANCE_UNAVAILABLE, SYSTEM_IDENTITY_UNAVAILABLE ou SYSTEM_DEPENDENCY_UNAVAILABLE
+      headers:
+        Retry-After: { schema: { type: integer } }
+      content: { application/json: { schema: { $ref: "#/components/schemas/Erro" } } }
+    ResultadoSincronizacao:
+      description: Resultado da propagação no Core
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: false
+            required: [situacao]
+            properties:
+              situacao: { type: string, enum: [aplicada, pendente] }
+
+  schemas:
+    Erro:
+      type: object
+      additionalProperties: false
+      required: [error]
+      properties:
+        error:
+          type: object
+          additionalProperties: false
+          required: [code, message, field, retryable, correlationId]
+          properties:
+            code: { type: string, pattern: "^[A-Z][A-Z0-9_]+$" }
+            message: { type: string }
+            field: { type: [string, "null"] }
+            retryable: { type: boolean }
+            correlationId: { type: string, format: uuid }
+            details:
+              type: array
+              items:
+                type: object
+                required: [field, code, message]
+                properties:
+                  field: { type: string }
+                  code: { type: string }
+                  message: { type: string }
+    Papel: { type: string, enum: [administrador, colaborador] }
+    PerfilLocal: { type: string, enum: [recepcao, barbeiro] }
+    Motivo: { type: string, minLength: 3, maxLength: 280 }
+    ComMotivo:
+      type: object
+      additionalProperties: false
+      required: [motivo]
+      properties: { motivo: { $ref: "#/components/schemas/Motivo" } }
+    Pagina:
+      type: object
+      additionalProperties: false
+      required: [offset, limit, total]
+      properties:
+        offset: { type: integer }
+        limit: { type: integer }
+        total: { type: integer }
+    Sessao:
+      type: object
+      additionalProperties: false
+      required: [conta, papel, perfis, situacao, profissional, unidade]
+      properties:
+        conta:
+          type: object
+          additionalProperties: false
+          required: [nome]
+          properties:
+            nome: { type: string }
+        papel: { $ref: "#/components/schemas/Papel" }
+        perfis: { type: array, items: { $ref: "#/components/schemas/PerfilLocal" } }
+        situacao:
+          type: string
+          enum: [ativa, configuracao_pendente]
+          description: configuracao_pendente = colaborador sem perfil efetivo
+        profissional:
+          type: [object, "null"]
+          additionalProperties: false
+          required: [id, nome]
+          properties:
+            id: { type: string, format: uuid }
+            nome: { type: string }
+        unidade:
+          type: object
+          additionalProperties: false
+          required: [nome, fuso]
+          properties:
+            nome: { type: string, description: displayName da instância no Core }
+            fuso: { type: string, description: IANA, do Core }
+    Membro:
+      type: object
+      additionalProperties: false
+      required: [membershipId, invitationId, nome, emailMascarado, papel, situacao, version, perfil]
+      properties:
+        membershipId: { type: [string, "null"], format: uuid }
+        invitationId: { type: [string, "null"], format: uuid }
+        nome: { type: [string, "null"] }
+        emailMascarado:
+          type: [string, "null"]
+          description: somente em convite pendente (contrato do Core)
+        papel: { $ref: "#/components/schemas/Papel" }
+        situacao: { type: string, enum: [ativo, revogado, convite_pendente] }
+        version: { type: [integer, "null"] }
+        perfil:
+          oneOf:
+            - { type: "null" }
+            - { $ref: "#/components/schemas/PerfilColaborador" }
+    PerfilColaborador:
+      type: object
+      additionalProperties: false
+      required: [membershipId, perfis, profissional, version]
+      properties:
+        membershipId: { type: string, format: uuid }
+        perfis: { type: array, minItems: 1, items: { $ref: "#/components/schemas/PerfilLocal" } }
+        profissional:
+          type: [object, "null"]
+          additionalProperties: false
+          required: [id, nome, estado]
+          properties:
+            id: { type: string, format: uuid }
+            nome: { type: string }
+            estado: { type: string, enum: [ativo, inativo] }
+        version: { type: integer }
+    ProfissionalEntrada:
+      type: object
+      additionalProperties: false
+      required: [nome]
+      properties:
+        nome: { type: string, minLength: 2, maxLength: 120 }
+        apelido: { type: [string, "null"], maxLength: 40 }
+        telefone:
+          type: [string, "null"]
+          pattern: "^[0-9]{10,11}$"
+          description: dígitos brutos enviados pelo campo mask="phone"
+    Profissional:
+      type: object
+      additionalProperties: false
+      required: [id, nome, apelido, telefone, estado, version]
+      properties:
+        id: { type: string, format: uuid }
+        nome: { type: string }
+        apelido: { type: [string, "null"] }
+        telefone: { type: [string, "null"], description: dígitos brutos (DDD + número) }
+        estado: { type: string, enum: [ativo, inativo] }
+        version: { type: integer }
