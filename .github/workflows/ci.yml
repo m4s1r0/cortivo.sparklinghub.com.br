@@ -1,0 +1,109 @@
+name: CI
+
+# Portões de qualidade da constituição (Princípios V e IX) e de ECO-016 (G2–G6).
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 5 * * *"
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: "22"
+
+jobs:
+  qualidade:
+    name: typecheck, lint e testes unitários
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm run test:unit
+
+  integracao:
+    name: integração com MySQL 8.4 real
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          # Serviço descartável do job; a credencial de teste só cria bancos t_*.
+          MYSQL_ALLOW_EMPTY_PASSWORD: "yes"
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
+    env:
+      TEST_MYSQL_URL: mysql://root@127.0.0.1:3306
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      - run: npm run test:integration
+
+  contrato:
+    name: contrato com o SparkCore e deriva do artefato
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          # Repositório do Core: defina a variável CORE_REPOSITORY e o segredo CORE_REPO_TOKEN.
+          repository: ${{ vars.CORE_REPOSITORY }}
+          token: ${{ secrets.CORE_REPO_TOKEN }}
+          path: core
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      - run: npm run test:contract
+        env:
+          CORE_REPO_DIR: ${{ github.workspace }}/core
+
+  build-e-seguranca:
+    name: build, bundle sem segredos e npm audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: npm run check:bundle
+      # SEC-BASE-09 / G3: sem achado moderado ou superior nas dependências de produção.
+      - run: npm audit --omit=dev --audit-level=moderate
+
+  e2e:
+    name: E2E (Playwright + axe) contra o SparkCore local
+    # Depende do Core local com duas instâncias Cortivo e uma Tuteli (Parte A, T016):
+    # roda sob demanda ou à noite, não a cada push.
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:e2e

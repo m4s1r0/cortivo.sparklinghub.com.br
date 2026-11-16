@@ -1,0 +1,1072 @@
+openapi: 3.1.0
+info:
+  title: Cortivo API — extensão C02 (unidade e cadastros)
+  version: 0.2.0
+  description: >
+    Contrato aditivo da API própria do Cortivo. As convenções, sessão, envelope de erro,
+    X-Correlation-Id, Idempotency-Key, proteção de origem, limite de corpo, isolamento e
+    versionamento seguem contracts da fatia 001. Configuração, mutações de equipe, mutações de
+    catálogo e auditoria exigem papel administrador; operações de cliente aceitam administrador
+    ou Recepção; listas de catálogo e profissionais podem ser lidas por Recepção para os fluxos
+    operacionais. O perfil local nunca amplia o papel central. O contrato de perfil em
+    /equipe/membros/{membershipId}/perfil e as operações básicas de profissional da fatia 001 são
+    reutilizados; C01 já prevê ampliar a leitura de profissionais nesta fatia. Não altera o
+    contrato /internal/v1 do SparkCore.
+servers:
+  - url: /api
+security:
+  - sessaoCortivo: []
+tags:
+  - name: Unidade
+  - name: Clientes
+  - name: Profissionais
+  - name: Catálogo
+  - name: Auditoria
+paths:
+  /configuracoes/unidade:
+    get:
+      operationId: obterConfiguracaoUnidade
+      tags: [Unidade]
+      summary: Consultar configuração da unidade e prontidão
+      responses:
+        "200":
+          description: Configuração atual
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Unidade" }
+        "401": { $ref: "#/components/responses/NaoAutenticado" }
+        "403": { $ref: "#/components/responses/SemPermissao" }
+        "503": { $ref: "#/components/responses/Indisponivel" }
+    patch:
+      operationId: atualizarConfiguracaoUnidade
+      tags: [Unidade]
+      summary: Atualizar dados operacionais da unidade
+      parameters: [{ $ref: "#/components/parameters/IdempotencyKey" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UnidadeAtualizacao" }
+      responses:
+        "200":
+          description: Atualizado e auditado
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Unidade" }
+        "403": { $ref: "#/components/responses/SemPermissao" }
+        "409": { $ref: "#/components/responses/Conflito" }
+        "422": { $ref: "#/components/responses/Validacao" }
+        "503": { $ref: "#/components/responses/Indisponivel" }
+
+  /configuracoes/unidade/horarios:
+    get:
+      operationId: obterHorariosUnidade
+      tags: [Unidade]
+      responses:
+        "200":
+          description: Horários semanais da unidade
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/HorariosUnidade" }
+        "403": { $ref: "#/components/responses/SemPermissao" }
+    put:
+      operationId: substituirHorariosUnidade
+      tags: [Unidade]
+      summary: Substituir horários semanais como conjunto validado
+      parameters: [{ $ref: "#/components/parameters/IdempotencyKey" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [version, intervalos]
+              properties:
+                version: { type: integer, minimum: 1 }
+                intervalos:
+                  type: array
+                  items: { $ref: "#/components/schemas/IntervaloSemanal" }
+      responses:
+        "200":
+          description: Horários substituídos
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/HorariosUnidade" }
+        "403": { $ref: "#/components/responses/SemPermissao" }
+        "409": { $ref: "#/components/responses/Conflito" }
+        "422": { $ref: "#/components/responses/Validacao" }
+
+  /bloqueios:
+    get:
+      operationId: listarBloqueiosUnidade
+      tags: [Profissionais]
+      parameters:
+        - { $ref: "#/components/parameters/Offset" }
+        - { $ref: "#/components/parameters/Limit" }
+      responses:
+        "200":
+          description: Bloqueios de unidade paginados
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PaginaBloqueios" }
+        "403": { $ref: "#/components/responses/SemPermissao" }
+    post:
+      operationId: criarBloqueioUnidade
+      tags: [Profissionais]
+      summary: Criar bloqueio da unidade; o identificador do profissional não é aceito no corpo
+      parameters: [{ $ref: "#/components/parameters/IdempotencyKey" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/BloqueioEntrada" }
+      responses:
+        "201":
+          description: Criado e auditado
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Bloqueio" }
+        "403": { $ref: "#/components/responses/SemPermissao" }
+        "409": { $ref: "#/components/responses/Conflito" }
+        "422": { $ref: "#/components/responses/Validacao" }
+
+  /bloqueios/{bloqueioId}/inativar:
+    parameters:
+      - name: bloqueioId
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    post:
+      operationId: inativarBloqueio
+      tags: [Profissionais]
+      parameters: [{ $ref: "#/components/parameters/IdempotencyKey" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ComMotivo" }
+      responses:
+        "204": { description: Bloqueio inativado e auditado }
+        "403": { $ref: "#/components/responses/SemPermissao" }
+        "404": { $ref: "#/components/responses/NaoEncontrado" }
+        "409": { $ref: "#/components/responses/Conflito" }
+
+  /configuracoes/prontidao:
+    get:
+      operationId: obterProntidaoUnidade
+      tags: [Unidade]
+      summary: Listar pré-requisitos pendentes para habilitar reservas
+      responses:
+        "200":
+          description: Estado de prontidão da unidade
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [pronta, pendencias]
+                properties:
+                  pronta: { type: boolean }
+                  pendencias:
+                    type: array
+                    items:
+                      type: string
+                      enum: [servico_ativo, profissional_habilitado, disponibilidade]
+        "403": { $ref: "#/components/responses/SemPermissao" }
+
+  /clientes:
+    get:
+      operationId: listarClientes
+      tags: [Clientes]
+      summary: Buscar clientes por nome ou telefone normalizado
+      parameters:
+        - { $ref: "#/components/parameters/Busca" }
+        - { $ref: "#/components/parameters/Offset" }
+        - { $ref: "#/components/parameters/Limit" }
+      responses:
+        "200":
+          description: Página de clientes; telefone compartilhado pode produzir coincidências
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PaginaClientes" }
+        "401": { $ref: "#/components/responses/NaoAutenticado" }
+        "403": { $ref: "#/components/responses/SemPermissao" }
+    post:
+      operationId: criarCliente
+      tags: [Clientes]
+      summary: Criar cliente na unidade atual
+      parameters: [{ $ref: "#/components/parameters/IdempotencyKey" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ClienteEntrada" }
+      responses:
+        "201":
+          description: Criado e auditado
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Cliente" }
+        "403": { $ref: "#/components/responses/SemPermissao" }
+        "409": { $ref: "#/components/responses/Conflito" }
+        "422": { $ref: "#/components/responses/Validacao" }
+
+  /servicos/{servicoId}/inativar:
+    parameters:
+      - { $ref: "#/components/parameters/UuidServico" }
+    post:
+      operationId: inativarServico
+      tags: [Catálogo]
+      parameters: [{ $ref: "#/components/parameters/IdempotencyKey" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ComMotivo" }
+      responses:
+        "204": { description: Inativado; referências históricas preservadas }
+        "403": { $ref: "#/components/responses/SemPermissao" }
+        "404": { $ref: "#/components/responses/NaoEncontrado" }
+        "409": { $ref: "#/components/responses/Conflito" }
+
+  /clientes/{clienteId}:
+    parameters:
+      - { $ref: "#/components/parameters/UuidCliente" }
+    get:
+      operationId: obterCliente
+      tags: [Clientes]
+      responses:
+        "200":
+          description: Dados do cliente, sem contato de outros registros
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Cliente" }
+        "404": { $ref: "#/components/responses/NaoEncontrado" }
+    patch:
+      operationId: atualizarCliente
+      tags: [Clientes]
+      parameters: [{ $ref: "#/components/parameters/IdempotencyKey" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ClienteAtualizacao" }
+      responses:
+        "200":
+          description: Atualizado e auditado
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Cliente" }
+        "404": { $ref: "#/components/responses/NaoEncontrado" }
+        "409": { $ref: "#/components/responses/Conflito" }
+        "422": { $ref: "#/components/responses/Validacao" }
+
+  /itens/{itemId}/inativar:
+    parameters:
+      - { $ref: "#/components/parameters/UuidItem" }
+    post:
+      operationId: inativarItem
+      tags: [Catálogo]
+      parameters: [{ $ref: "#/components/parameters/IdempotencyKey" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ComMotivo" }
+      responses:
+        "204": { description: Inativado; referências históricas preservadas }
+        "403": { $ref: "#/components/responses/SemPermissao" }
+        "404": { $ref: "#/components/responses/NaoEncontrado" }
+        "409": { $ref: "#/components/responses/Conflito" }
+
+  /clientes/{clienteId}/inativar:
+    parameters:
+      - { $ref: "#/components/parameters/UuidCliente" }
+    post:
+      operationId: inativarCliente
+      tags: [Clientes]
+      parameters: [{ $ref: "#/components/parameters/IdempotencyKey" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ComMotivo" }
+      responses:
+        "204": { description: Inativado; histórico preservado }
+        "404": { $ref: "#/components/responses/NaoEncontrado" }
+        "409": { $ref: "#/components/responses/Conflito" }
+        "422": { $ref: "#/components/responses/Validacao" }
+
+  /clientes/{clienteId}/preferencias:
+    parameters:
+      - { $ref: "#/components/parameters/UuidCliente" }
+    get:
+      operationId: listarPreferenciasCliente
+      tags: [Clientes]
+      responses:
+        "200":
+          description: Histórico de preferências por canal e finalidade
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/PreferenciaContato" }
+        "404": { $ref: "#/components/responses/NaoEncontrado" }
+    post:
+      operationId: registrarPreferenciaCliente
+      tags: [Clientes]
+      parameters: [{ $ref: "#/components/parameters/IdempotencyKey" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PreferenciaEntrada" }
+      responses:
+        "201":
+          description: Preferência registrada; histórico anterior mantido
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PreferenciaContato" }
+        "404": { $ref: "#/components/responses/NaoEncontrado" }
+        "422": { $ref: "#/components/responses/Validacao" }
+
+  /clientes/{clienteId}/reativar:
+    parameters:
+      - { $ref: "#/components/parameters/UuidCliente" }
+    post:
+      operationId: reativarCliente
+      tags: [Clientes]
+      parameters: [{ $ref: "#/components/parameters/IdempotencyKey" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ComMotivo" }
+      responses:
+        "204": { description: Reativado e auditado }
+        "403": { $ref: "#/components/responses/SemPermissao" }
+        "404": { $ref: "#/components/responses/NaoEncontrado" }
+        "409": { $ref: "#/components/responses/Conflito" }
+
+  /profissionais/{id}:
+    parameters:
+      - { $ref: "#/components/parameters/IdProfissional" }
+    get:
+      operationId: obterProfissional
+      tags: [Profissionais]
+      responses:
+        "200":
+          description: Cadastro, expediente, habilitações e bloqueios do profissional
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ProfissionalDetalhe" }
+        "404": { $ref: "#/components/responses/NaoEncontrado" }
+    patch:
+      operationId: atualizarProfissional
+      tags: [Profissionais]
+      parameters: [{ $ref: "#/components/parameters/IdempotencyKey" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ProfissionalAtualizacao" }
+      responses:
+        "200":
+          description: Atualizado e auditado
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Profissional" }
+        "404": { $ref: "#/components/responses/NaoEncontrado" }
+        "409": { $ref: "#/components/responses/Conflito" }
+        "422": { $ref: "#/components/responses/Validacao" }
+
+  /profissionais/{id}/servicos:
+    parameters:
+      - { $ref: "#/components/parameters/IdProfissional" }
+    put:
+      operationId: substituirServicosProfissional
+      tags: [Profissionais]
+      parameters: [{ $ref: "#/components/parameters/IdempotencyKey" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [version, servicoIds]
+              properties:
+                version: { type: integer, minimum: 1 }
+                servicoIds:
+                  type: array
+                  uniqueItems: true
+                  items: { type: string, format: uuid }
+      responses:
+        "200": { description: Habilitações atualizadas e auditadas }
+        "404": { $ref: "#/components/responses/NaoEncontrado" }
+        "409": { $ref: "#/components/responses/Conflito" }
+        "422": { $ref: "#/components/responses/Validacao" }
+
+  /profissionais/{id}/expediente:
+    parameters:
+      - { $ref: "#/components/parameters/IdProfissional" }
+    put:
+      operationId: substituirExpediente
+      tags: [Profissionais]
+      parameters: [{ $ref: "#/components/parameters/IdempotencyKey" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [version, intervalos]
+              properties:
+                version: { type: integer, minimum: 1 }
+                intervalos:
+                  type: array
+                  items: { $ref: "#/components/schemas/IntervaloSemanal" }
+      responses:
+        "200": { description: Expediente substituído e auditado }
+        "404": { $ref: "#/components/responses/NaoEncontrado" }
+        "409": { $ref: "#/components/responses/Conflito" }
+        "422": { $ref: "#/components/responses/Validacao" }
+
+  /profissionais/{id}/bloqueios:
+    parameters:
+      - { $ref: "#/components/parameters/IdProfissional" }
+    get:
+      operationId: listarBloqueiosProfissional
+      tags: [Profissionais]
+      parameters:
+        - { $ref: "#/components/parameters/Offset" }
+        - { $ref: "#/components/parameters/Limit" }
+      responses:
+        "200":
+          description: Bloqueios específicos e de unidade pertinentes
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PaginaBloqueios" }
+        "404": { $ref: "#/components/responses/NaoEncontrado" }
+    post:
+      operationId: criarBloqueio
+      tags: [Profissionais]
+      parameters: [{ $ref: "#/components/parameters/IdempotencyKey" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/BloqueioEntrada" }
+      responses:
+        "201":
+          description: Criado e auditado
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Bloqueio" }
+        "404": { $ref: "#/components/responses/NaoEncontrado" }
+        "409": { $ref: "#/components/responses/Conflito" }
+        "422": { $ref: "#/components/responses/Validacao" }
+
+  /servicos:
+    get:
+      operationId: listarServicos
+      tags: [Catálogo]
+      parameters:
+        - { $ref: "#/components/parameters/Estado" }
+        - { $ref: "#/components/parameters/Offset" }
+        - { $ref: "#/components/parameters/Limit" }
+      responses:
+        "200":
+          description: Serviços da unidade
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PaginaServicos" }
+        "403": { $ref: "#/components/responses/SemPermissao" }
+    post:
+      operationId: criarServico
+      tags: [Catálogo]
+      parameters: [{ $ref: "#/components/parameters/IdempotencyKey" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ServicoEntrada" }
+      responses:
+        "201":
+          description: Criado e auditado
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Servico" }
+        "403": { $ref: "#/components/responses/SemPermissao" }
+        "409": { $ref: "#/components/responses/Conflito" }
+        "422": { $ref: "#/components/responses/Validacao" }
+
+  /servicos/{servicoId}:
+    parameters:
+      - { $ref: "#/components/parameters/UuidServico" }
+    get:
+      operationId: obterServico
+      tags: [Catálogo]
+      responses:
+        "200":
+          description: Serviço da instância
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Servico" }
+        "404": { $ref: "#/components/responses/NaoEncontrado" }
+    patch:
+      operationId: atualizarServico
+      tags: [Catálogo]
+      parameters: [{ $ref: "#/components/parameters/IdempotencyKey" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ServicoAtualizacao" }
+      responses:
+        "200":
+          description: Atualizado e auditado
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Servico" }
+        "404": { $ref: "#/components/responses/NaoEncontrado" }
+        "409": { $ref: "#/components/responses/Conflito" }
+        "422": { $ref: "#/components/responses/Validacao" }
+
+  /servicos/{servicoId}/reativar:
+    parameters:
+      - { $ref: "#/components/parameters/UuidServico" }
+    post:
+      operationId: reativarServico
+      tags: [Catálogo]
+      parameters: [{ $ref: "#/components/parameters/IdempotencyKey" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ComMotivo" }
+      responses:
+        "204": { description: Reativado e auditado }
+        "403": { $ref: "#/components/responses/SemPermissao" }
+        "404": { $ref: "#/components/responses/NaoEncontrado" }
+        "409": { $ref: "#/components/responses/Conflito" }
+
+  /itens:
+    get:
+      operationId: listarItens
+      tags: [Catálogo]
+      parameters:
+        - { $ref: "#/components/parameters/Estado" }
+        - { $ref: "#/components/parameters/Offset" }
+        - { $ref: "#/components/parameters/Limit" }
+      responses:
+        "200":
+          description: Itens de revenda e insumos da unidade
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PaginaItens" }
+        "403": { $ref: "#/components/responses/SemPermissao" }
+    post:
+      operationId: criarItem
+      tags: [Catálogo]
+      parameters: [{ $ref: "#/components/parameters/IdempotencyKey" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ItemEntrada" }
+      responses:
+        "201":
+          description: Criado e auditado
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Item" }
+        "403": { $ref: "#/components/responses/SemPermissao" }
+        "409": { $ref: "#/components/responses/Conflito" }
+        "422": { $ref: "#/components/responses/Validacao" }
+
+  /itens/{itemId}:
+    parameters:
+      - { $ref: "#/components/parameters/UuidItem" }
+    get:
+      operationId: obterItem
+      tags: [Catálogo]
+      responses:
+        "200":
+          description: Cadastro do item da instância
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Item" }
+        "403": { $ref: "#/components/responses/SemPermissao" }
+        "404": { $ref: "#/components/responses/NaoEncontrado" }
+    patch:
+      operationId: atualizarItem
+      tags: [Catálogo]
+      parameters: [{ $ref: "#/components/parameters/IdempotencyKey" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ItemAtualizacao" }
+      responses:
+        "200":
+          description: Atualizado e auditado
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Item" }
+        "404": { $ref: "#/components/responses/NaoEncontrado" }
+        "409": { $ref: "#/components/responses/Conflito" }
+        "422": { $ref: "#/components/responses/Validacao" }
+
+  /itens/{itemId}/reativar:
+    parameters:
+      - { $ref: "#/components/parameters/UuidItem" }
+    post:
+      operationId: reativarItem
+      tags: [Catálogo]
+      parameters: [{ $ref: "#/components/parameters/IdempotencyKey" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ComMotivo" }
+      responses:
+        "204": { description: Reativado e auditado }
+        "403": { $ref: "#/components/responses/SemPermissao" }
+        "404": { $ref: "#/components/responses/NaoEncontrado" }
+        "409": { $ref: "#/components/responses/Conflito" }
+
+  /auditoria:
+    get:
+      operationId: listarAuditoria
+      tags: [Auditoria]
+      summary: Consultar eventos administrativos paginados; somente administrador
+      parameters:
+        - { $ref: "#/components/parameters/Offset" }
+        - { $ref: "#/components/parameters/Limit" }
+        - { $ref: "#/components/parameters/Entidade" }
+      responses:
+        "200":
+          description: Eventos minimizados da instância atual
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PaginaAuditoria" }
+        "401": { $ref: "#/components/responses/NaoAutenticado" }
+        "403": { $ref: "#/components/responses/SemPermissao" }
+
+components:
+  securitySchemes:
+    sessaoCortivo:
+      type: apiKey
+      in: cookie
+      name: __Host-cortivo_session
+  parameters:
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema: { type: string, format: uuid }
+    Offset:
+      name: offset
+      in: query
+      schema: { type: integer, minimum: 0, default: 0 }
+    Limit:
+      name: limit
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+    Busca:
+      name: q
+      in: query
+      schema: { type: string, minLength: 1, maxLength: 120 }
+    Estado:
+      name: estado
+      in: query
+      schema: { type: string, enum: [ativo, inativo] }
+    Entidade:
+      name: entidade
+      in: query
+      schema: { type: string, maxLength: 48 }
+    UuidCliente:
+      name: clienteId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    IdProfissional:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    UuidServico:
+      name: servicoId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    UuidItem:
+      name: itemId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+  responses:
+    NaoAutenticado:
+      description: Sessão inválida ou vínculo revogado
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Erro" }
+    SemPermissao:
+      description: Papel ou perfil insuficiente
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Erro" }
+    NaoEncontrado:
+      description: Recurso inexistente ou fora da instância atual
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Erro" }
+    Conflito:
+      description: Versão, idempotência ou conflito de operação
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Erro" }
+    Validacao:
+      description: Entrada inválida com indicação segura do campo
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Erro" }
+    Indisponivel:
+      description: Dependência local indisponível
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Erro" }
+  schemas:
+    Erro:
+      type: object
+      additionalProperties: false
+      required: [codigo, mensagem, correlationId]
+      properties:
+        codigo: { type: string }
+        mensagem: { type: string }
+        campo: { type: [string, "null"] }
+        repetivel: { type: boolean }
+        correlationId: { type: string, format: uuid }
+    UnidadeAtualizacao:
+      type: object
+      additionalProperties: false
+      minProperties: 2
+      required: [version]
+      properties:
+        version: { type: integer, minimum: 1 }
+        nomeAtendimento: { type: string, minLength: 1, maxLength: 120 }
+        telefone: { type: [string, "null"], pattern: "^[0-9]{10,11}$" }
+        whatsapp: { type: [string, "null"], pattern: "^[0-9]{10,11}$" }
+        email: { type: [string, "null"], format: email, maxLength: 254 }
+        cep: { type: [string, "null"], pattern: "^[0-9]{8}$" }
+        logradouro: { type: [string, "null"], maxLength: 160 }
+        numero: { type: [string, "null"], maxLength: 20 }
+        complemento: { type: [string, "null"], maxLength: 80 }
+        bairro: { type: [string, "null"], maxLength: 100 }
+        cidade: { type: [string, "null"], maxLength: 100 }
+        uf: { type: [string, "null"], pattern: "^[A-Z]{2}$" }
+        toleranciaFaltaMin: { type: integer, minimum: 0 }
+        passoAgendaMin: { type: integer, enum: [5, 10, 15, 20, 30] }
+    Unidade:
+      type: object
+      additionalProperties: false
+      required: [nomeOrigem, fuso, nomeAtendimento, version, pronta, pendencias]
+      properties:
+        nomeOrigem: { type: string }
+        fuso: { type: string }
+        nomeAtendimento: { type: [string, "null"] }
+        telefone: { type: [string, "null"] }
+        whatsapp: { type: [string, "null"] }
+        email: { type: [string, "null"] }
+        cep: { type: [string, "null"] }
+        logradouro: { type: [string, "null"] }
+        numero: { type: [string, "null"] }
+        complemento: { type: [string, "null"] }
+        bairro: { type: [string, "null"] }
+        cidade: { type: [string, "null"] }
+        uf: { type: [string, "null"] }
+        toleranciaFaltaMin: { type: integer, minimum: 0 }
+        passoAgendaMin: { type: integer, enum: [5, 10, 15, 20, 30] }
+        version: { type: integer }
+        pronta: { type: boolean }
+        pendencias: { type: array, items: { type: string } }
+    HorariosUnidade:
+      type: object
+      required: [version, intervalos]
+      properties:
+        version: { type: integer }
+        intervalos:
+          type: array
+          items: { $ref: "#/components/schemas/IntervaloSemanal" }
+    IntervaloSemanal:
+      type: object
+      additionalProperties: false
+      required: [diaSemana, inicio, fim]
+      properties:
+        diaSemana: { type: integer, minimum: 1, maximum: 7 }
+        inicio: { type: string, pattern: "^(?:[01][0-9]|2[0-3]):[0-5][0-9]$" }
+        fim: { type: string, pattern: "^(?:[01][0-9]|2[0-3]):[0-5][0-9]$" }
+    ClienteEntrada:
+      type: object
+      additionalProperties: false
+      required: [nome]
+      properties:
+        nome: { type: string, minLength: 1, maxLength: 120 }
+        telefone: { type: [string, "null"], pattern: "^[0-9]{10,11}$" }
+        email: { type: [string, "null"], format: email, maxLength: 254 }
+        dataNascimento: { type: [string, "null"], format: date }
+        observacoes: { type: string, maxLength: 280 }
+        profissionalPreferidoId: { type: [string, "null"], format: uuid }
+    ClienteAtualizacao:
+      type: object
+      additionalProperties: false
+      minProperties: 2
+      required: [version]
+      properties:
+        version: { type: integer, minimum: 1 }
+        nome: { type: string, minLength: 1, maxLength: 120 }
+        telefone: { type: [string, "null"], pattern: "^[0-9]{10,11}$" }
+        email: { type: [string, "null"], format: email, maxLength: 254 }
+        dataNascimento: { type: [string, "null"], format: date }
+        observacoes: { type: string, maxLength: 280 }
+        profissionalPreferidoId: { type: [string, "null"], format: uuid }
+    Cliente:
+      type: object
+      additionalProperties: false
+      required: [id, nome, telefone, email, dataNascimento, observacoes, profissionalPreferidoId, estado, version]
+      properties:
+        id: { type: string, format: uuid }
+        nome: { type: string, minLength: 1, maxLength: 120 }
+        telefone: { type: [string, "null"] }
+        email: { type: [string, "null"] }
+        dataNascimento: { type: [string, "null"], format: date }
+        observacoes: { type: string, maxLength: 280 }
+        profissionalPreferidoId: { type: [string, "null"], format: uuid }
+        estado: { type: string, enum: [ativo, inativo] }
+        version: { type: integer }
+        coincidenciaTelefone: { type: boolean }
+    PreferenciaEntrada:
+      type: object
+      additionalProperties: false
+      required: [canal, finalidade, permitido]
+      properties:
+        canal: { type: string, enum: [whatsapp, telefone, sms] }
+        finalidade: { type: string, enum: [confirmacao, lembrete, retorno] }
+        permitido: { type: boolean }
+    PreferenciaContato:
+      type: object
+      additionalProperties: false
+      required: [canal, finalidade, permitido, origem, registradoEm, ator]
+      properties:
+        canal: { type: string, enum: [whatsapp, telefone, sms] }
+        finalidade: { type: string, enum: [confirmacao, lembrete, retorno] }
+        permitido: { type: boolean }
+        origem: { type: string, maxLength: 64 }
+        registradoEm: { type: string, format: date-time }
+        ator: { type: string, maxLength: 120 }
+    ProfissionalAtualizacao:
+      type: object
+      additionalProperties: false
+      minProperties: 2
+      required: [version]
+      properties:
+        version: { type: integer, minimum: 1 }
+        nome: { type: string, minLength: 2, maxLength: 120 }
+        apelido: { type: [string, "null"], maxLength: 40 }
+        telefone: { type: [string, "null"], pattern: "^[0-9]{10,11}$" }
+        corAgenda: { type: [string, "null"], maxLength: 40 }
+    Profissional:
+      type: object
+      additionalProperties: false
+      required: [id, nome, apelido, telefone, estado, version, membershipId]
+      properties:
+        id: { type: string, format: uuid }
+        nome: { type: string, minLength: 2, maxLength: 120 }
+        apelido: { type: [string, "null"], maxLength: 40 }
+        telefone: { type: [string, "null"] }
+        estado: { type: string, enum: [ativo, inativo] }
+        membershipId: { type: [string, "null"], format: uuid, readOnly: true }
+        version: { type: integer }
+    ProfissionalDetalhe:
+      type: object
+      additionalProperties: false
+      required: [id, nome, apelido, telefone, estado, version, membershipId, servicoIds, expediente, bloqueios]
+      properties:
+        id: { type: string, format: uuid }
+        nome: { type: string, minLength: 2, maxLength: 120 }
+        apelido: { type: [string, "null"], maxLength: 40 }
+        telefone: { type: [string, "null"] }
+        estado: { type: string, enum: [ativo, inativo] }
+        membershipId: { type: [string, "null"], format: uuid }
+        version: { type: integer }
+        servicoIds:
+          type: array
+          items: { type: string, format: uuid }
+        expediente:
+          type: array
+          items: { $ref: "#/components/schemas/IntervaloSemanal" }
+        bloqueios:
+          type: array
+          items: { $ref: "#/components/schemas/Bloqueio" }
+    BloqueioEntrada:
+      type: object
+      additionalProperties: false
+      required: [inicioEm, fimEm, motivo]
+      properties:
+        inicioEm: { type: string, format: date-time }
+        fimEm: { type: string, format: date-time }
+        motivo: { type: string, minLength: 1, maxLength: 280 }
+    Bloqueio:
+      type: object
+      additionalProperties: false
+      required: [id, profissionalId, inicioEm, fimEm, motivo, estado, version]
+      properties:
+        id: { type: string, format: uuid }
+        profissionalId: { type: [string, "null"], format: uuid }
+        inicioEm: { type: string, format: date-time }
+        fimEm: { type: string, format: date-time }
+        motivo: { type: string, minLength: 1, maxLength: 280 }
+        estado: { type: string, enum: [ativo, inativo] }
+        version: { type: integer }
+    ServicoEntrada:
+      type: object
+      additionalProperties: false
+      required: [nome, duracaoMin, precoCents]
+      properties:
+        nome: { type: string, minLength: 1, maxLength: 120 }
+        duracaoMin: { type: integer, minimum: 1 }
+        precoCents: { type: integer, minimum: 0 }
+        cadenciaRetornoDias: { type: [integer, "null"], minimum: 1 }
+    ServicoAtualizacao:
+      type: object
+      additionalProperties: false
+      minProperties: 2
+      required: [version]
+      properties:
+        version: { type: integer, minimum: 1 }
+        nome: { type: string, minLength: 1, maxLength: 120 }
+        duracaoMin: { type: integer, minimum: 1 }
+        precoCents: { type: integer, minimum: 0 }
+        cadenciaRetornoDias: { type: [integer, "null"], minimum: 1 }
+    Servico:
+      type: object
+      additionalProperties: false
+      required: [id, nome, duracaoMin, precoCents, cadenciaRetornoDias, estado, version]
+      properties:
+        id: { type: string, format: uuid }
+        nome: { type: string, minLength: 1, maxLength: 120 }
+        duracaoMin: { type: integer, minimum: 1 }
+        precoCents: { type: integer, minimum: 0 }
+        cadenciaRetornoDias: { type: [integer, "null"], minimum: 1 }
+        estado: { type: string, enum: [ativo, inativo] }
+        version: { type: integer }
+    ItemEntrada:
+      type: object
+      additionalProperties: false
+      required: [nome, unidadeMedida, casasDecimais, uso, saldoMinimoMil]
+      properties:
+        nome: { type: string, minLength: 1, maxLength: 120 }
+        unidadeMedida: { type: string, enum: [un, ml, g] }
+        casasDecimais: { type: integer, minimum: 0, maximum: 3 }
+        uso:
+          type: array
+          minItems: 1
+          uniqueItems: true
+          items: { type: string, enum: [revenda, insumo] }
+        precoVendaCents: { type: [integer, "null"], minimum: 0 }
+        saldoMinimoMil: { type: integer, minimum: 0 }
+    ItemAtualizacao:
+      type: object
+      additionalProperties: false
+      minProperties: 2
+      required: [version]
+      properties:
+        version: { type: integer, minimum: 1 }
+        nome: { type: string, minLength: 1, maxLength: 120 }
+        unidadeMedida: { type: string, enum: [un, ml, g] }
+        casasDecimais: { type: integer, minimum: 0, maximum: 3 }
+        uso:
+          type: array
+          minItems: 1
+          uniqueItems: true
+          items: { type: string, enum: [revenda, insumo] }
+        precoVendaCents: { type: [integer, "null"], minimum: 0 }
+        saldoMinimoMil: { type: integer, minimum: 0 }
+    Item:
+      type: object
+      additionalProperties: false
+      required: [id, nome, unidadeMedida, casasDecimais, uso, precoVendaCents, saldoMinimoMil, estado, version]
+      properties:
+        id: { type: string, format: uuid }
+        nome: { type: string, minLength: 1, maxLength: 120 }
+        unidadeMedida: { type: string, enum: [un, ml, g] }
+        casasDecimais: { type: integer, minimum: 0, maximum: 3 }
+        uso:
+          type: array
+          items: { type: string, enum: [revenda, insumo] }
+        precoVendaCents: { type: [integer, "null"], minimum: 0 }
+        saldoMinimoMil: { type: integer, minimum: 0 }
+        estado: { type: string, enum: [ativo, inativo] }
+        version: { type: integer }
+    ComMotivo:
+      type: object
+      additionalProperties: false
+      required: [motivo, version]
+      properties:
+        motivo: { type: string, minLength: 3, maxLength: 280 }
+        version: { type: integer, minimum: 1 }
+    Pagina:
+      type: object
+      additionalProperties: false
+      required: [offset, limit, total]
+      properties:
+        offset: { type: integer }
+        limit: { type: integer }
+        total: { type: integer }
+    PaginaClientes:
+      type: object
+      required: [itens, pagina]
+      properties:
+        itens: { type: array, items: { $ref: "#/components/schemas/Cliente" } }
+        pagina: { $ref: "#/components/schemas/Pagina" }
+    PaginaServicos:
+      type: object
+      required: [itens, pagina]
+      properties:
+        itens: { type: array, items: { $ref: "#/components/schemas/Servico" } }
+        pagina: { $ref: "#/components/schemas/Pagina" }
+    PaginaItens:
+      type: object
+      required: [itens, pagina]
+      properties:
+        itens: { type: array, items: { $ref: "#/components/schemas/Item" } }
+        pagina: { $ref: "#/components/schemas/Pagina" }
+    PaginaBloqueios:
+      type: object
+      required: [itens, pagina]
+      properties:
+        itens: { type: array, items: { $ref: "#/components/schemas/Bloqueio" } }
+        pagina: { $ref: "#/components/schemas/Pagina" }
+    EventoAuditoria:
+      type: object
+      additionalProperties: false
+      required: [id, ocorridoEm, ator, acao, resultado, entidade, correlationId]
+      properties:
+        id: { type: string, format: uuid }
+        ocorridoEm: { type: string, format: date-time }
+        ator: { type: string, maxLength: 120 }
+        acao: { type: string, maxLength: 64 }
+        resultado: { type: string, enum: [sucesso, recusado] }
+        entidade: { type: string, maxLength: 48 }
+        entidadeId: { type: [string, "null"], maxLength: 36 }
+        motivo: { type: [string, "null"], maxLength: 280 }
+        correlationId: { type: string, format: uuid }
+    PaginaAuditoria:
+      type: object
+      required: [itens, pagina]
+      properties:
+        itens: { type: array, items: { $ref: "#/components/schemas/EventoAuditoria" } }
+        pagina: { $ref: "#/components/schemas/Pagina" }

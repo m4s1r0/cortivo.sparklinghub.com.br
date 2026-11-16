@@ -1,0 +1,6 @@
+* text=auto eol=lf
+*.tgz binary
+*.ico binary
+*.png binary
+# Marca aprovada (UI-050): bytes intocados para o sha256 do manifesto continuar valendo.
+web/public/brand/** -text
